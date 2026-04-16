@@ -492,9 +492,9 @@ function generateTOTP(secret){
 
 /* ── Angel One connect ── */
 async function connectAngelOne(){
-  const apiKey   = document.getElementById('inp-apikey').value.trim();
-  const clientId = document.getElementById('inp-clientid').value.trim();
-  const password = document.getElementById('inp-password').value.trim();
+  const apiKey     = document.getElementById('inp-apikey').value.trim();
+  const clientId   = document.getElementById('inp-clientid').value.trim();
+  const password   = document.getElementById('inp-password').value.trim();
   const totpSecret = document.getElementById('inp-totp').value.trim();
 
   if(!apiKey || !clientId || !password || !totpSecret){
@@ -509,37 +509,52 @@ async function connectAngelOne(){
 
   try {
     const totp = await generateTOTP(totpSecret);
-    const loginRes = await fetch('https://apiconnect.angelbroking.com/rest/auth/angelbroking/user/v1/loginByPassword', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'X-UserType': 'USER',
-        'X-SourceID': 'WEB',
-        'X-ClientLocalIP': '127.0.0.1',
-        'X-ClientPublicIP': '127.0.0.1',
-        'X-MACAddress': '00:00:00:00:00:00',
-        'X-PrivateKey': apiKey
-      },
-      body: JSON.stringify({ clientcode: clientId, password, totp })
-    });
+    addAlert('system', 'totp: ' + totp + ' — sending login…');
 
-    const loginData = await loginRes.json();
+    let loginData;
+    // Try direct first, fallback to CORS proxy
+    const ANGEL_LOGIN_URL = 'https://apiconnect.angelbroking.com/rest/auth/angelbroking/user/v1/loginByPassword';
+    const PROXY_URL = 'https://corsproxy.io/?' + encodeURIComponent(ANGEL_LOGIN_URL);
+    try {
+      const loginRes = await fetch(PROXY_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'X-UserType': 'USER',
+          'X-SourceID': 'WEB',
+          'X-ClientLocalIP': '127.0.0.1',
+          'X-ClientPublicIP': '127.0.0.1',
+          'X-MACAddress': '00:00:00:00:00:00',
+          'X-PrivateKey': apiKey
+        },
+        body: JSON.stringify({ clientcode: clientId, password, totp })
+      });
+      const raw = await loginRes.text();
+      addAlert('system', 'api response: ' + raw.slice(0, 150));
+      loginData = JSON.parse(raw);
+    } catch(fetchErr) {
+      setConnStatus('error');
+      addAlert('system', 'fetch blocked — CORS issue. Angel One API does not allow browser calls directly. Need a proxy.');
+      addAlert('system', 'workaround: use demo mode or set up a proxy server');
+      return;
+    }
 
     if(!loginData.data || !loginData.data.jwtToken){
       setConnStatus('error');
-      addAlert('system', 'login failed: ' + (loginData.message || 'check credentials'));
+      addAlert('system', 'login failed: ' + (loginData.message || loginData.errorCode || JSON.stringify(loginData).slice(0,100)));
       return;
     }
 
     jwtToken  = loginData.data.jwtToken;
     feedToken = loginData.data.feedToken;
-    addAlert('system', 'logged in — connecting websocket');
+    addAlert('system', 'logged in successfully');
     connectWebSocket(apiKey, clientId, feedToken);
 
   } catch(e) {
     setConnStatus('error');
-    addAlert('system', 'error: ' + e.message + ' — check CORS or try demo mode');
+    addAlert('system', 'error: ' + e.message);
+    console.error(e);
   }
 }
 
